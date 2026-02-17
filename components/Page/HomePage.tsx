@@ -30,17 +30,17 @@ const Header = () => {
 };
 
 interface Config {
-    shrinkRate: number;
+    densityDissipation: number;
     splatRadius: number;
 }
 
 const HomePage = () => {
     const theme = useTheme();
     
-    // Configuration for the shrinking vector mask effect.
-    // shrinkRate controls how quickly the trail erodes from the edges.
+    // Configuration for the fluid simulation.
+    // densityDissipation controls how quickly the trail fades. A value closer to 1 means a longer trail.
     const config: Config = {
-        shrinkRate: 0.35, 
+        densityDissipation: 0.98, 
         splatRadius: 40,
     };
 

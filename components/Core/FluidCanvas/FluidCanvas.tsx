@@ -4,12 +4,12 @@ import * as THREE from 'three';
 import { 
     baseVertexShader, 
     splatShader, 
-    shrinkShader,
+    dissipationShader,
     displayShader 
 } from './shaders';
 
 interface FluidConfig {
-    shrinkRate: number;
+    densityDissipation: number;
     splatRadius: number;
 }
 
@@ -39,7 +39,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
         container.appendChild(renderer.domElement);
 
         const simRes = 512; 
-        const aspectRatio = window.innerWidth / window.innerHeight;
+        let aspectRatio = window.innerWidth / window.innerHeight;
 
         const createFBO = (w: number, h: number) => new THREE.WebGLRenderTarget(w, h, {
             type: THREE.HalfFloatType,
@@ -77,7 +77,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
                 uPoint: { value: new THREE.Vector2() },
                 uRadius: { value: 0.01 },
                 uSource: { value: null },
-                uShrinkRate: { value: 0.01 },
+                uDissipation: { value: 0.98 },
                 uDensity: { value: null },
             },
             depthWrite: false,
@@ -86,7 +86,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
 
         const programs = {
             splat: createProgram(splatShader),
-            shrink: createProgram(shrinkShader),
+            dissipate: createProgram(dissipationShader),
             display: createProgram(displayShader)
         };
 
@@ -123,9 +123,9 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             const w = window.innerWidth;
             const h = window.innerHeight;
             renderer.setSize(w, h);
-            const newAspectRatio = w / h;
-            programs.splat.uniforms.uAspectRatio.value = newAspectRatio;
-            programs.display.uniforms.uAspectRatio.value = newAspectRatio;
+            aspectRatio = w / h;
+            programs.splat.uniforms.uAspectRatio.value = aspectRatio;
+            programs.display.uniforms.uAspectRatio.value = aspectRatio;
         };
 
         onResize();
@@ -144,10 +144,10 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
         const update = () => {
             requestAnimationFrame(update);
             
-            // 1. Shrink the existing texture
-            programs.shrink.uniforms.uSource.value = density.read().texture;
-            programs.shrink.uniforms.uShrinkRate.value = configRef.current.shrinkRate;
-            quad.material = programs.shrink;
+            // 1. Dissipate the existing density
+            programs.dissipate.uniforms.uSource.value = density.read().texture;
+            programs.dissipate.uniforms.uDissipation.value = configRef.current.densityDissipation;
+            quad.material = programs.dissipate;
             renderStep(density.write());
             density.swap();
 
@@ -155,11 +155,24 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             if (isInteracting) {
                 const dx = pointer.x - lastPointer.x;
                 const dy = pointer.y - lastPointer.y;
-                const distSq = dx*dx + dy*dy;
 
-                if (distSq > 0.000001) { 
+                // Correct distance for aspect ratio. This treats the distance
+                // in a space that is uniform, matching how it appears on screen.
+                const dxCorrected = dx * aspectRatio;
+                const distSq = dxCorrected * dxCorrected + dy * dy;
+
+                if (distSq > 0.000001) {
                     const dist = Math.sqrt(distSq);
-                    const steps = Math.max(1, Math.ceil(dist / 0.005));
+
+                    // The splat radius is defined in pixels. To compare it with our corrected
+                    // distance, we need to convert it to the same coordinate space. Since our
+                    // corrected distance is relative to screen height, we do the same for the radius.
+                    const radiusInPixels = configRef.current.splatRadius;
+                    const radiusInUV_Y = radiusInPixels / window.innerHeight;
+
+                    // The interpolation step distance must be smaller than the radius to ensure overlap.
+                    const stepDistance = radiusInUV_Y * 0.5; // Half radius for a safe margin
+                    const steps = Math.max(1, Math.ceil(dist / stepDistance));
 
                     for (let i = 0; i < steps; i++) {
                         const t = (i + 1) / steps;
@@ -170,9 +183,8 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
                         programs.splat.uniforms.uPoint.value.set(lerpX, lerpY);
                         programs.splat.uniforms.uColor.value.set(1.0, 1.0, 1.0);
                         
-                        const radiusInPixels = configRef.current.splatRadius;
-                        const radiusInUV = radiusInPixels / window.innerHeight;
-                        programs.splat.uniforms.uRadius.value = radiusInUV * radiusInUV;
+                        // The splat radius uniform expects a squared value.
+                        programs.splat.uniforms.uRadius.value = radiusInUV_Y * radiusInUV_Y;
 
                         quad.material = programs.splat;
                         renderStep(density.write());

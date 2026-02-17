@@ -26,18 +26,16 @@ export const splatShader = `
     }
 `;
 
-// New shader for a shrinking/erosion effect
-export const shrinkShader = `
+// Shader for fading out the fluid trails over time
+export const dissipationShader = `
     uniform sampler2D uSource;
-    uniform float uShrinkRate;
+    uniform float uDissipation;
     varying vec2 vUv;
 
     void main() {
         vec4 color = texture2D(uSource, vUv);
-        // Subtract a constant value to "erode" the trail
-        color.rgb -= uShrinkRate;
-        // Clamp at zero to prevent negative color values
-        color.rgb = max(color.rgb, 0.0);
+        // Multiply by the dissipation factor to fade out
+        color.rgb *= uDissipation;
         gl_FragColor = color;
     }
 `;
