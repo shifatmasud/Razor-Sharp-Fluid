@@ -141,12 +141,21 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             renderer.render(scene, camera);
         };
 
+        const clock = new THREE.Clock();
+
         const update = () => {
             requestAnimationFrame(update);
             
+            const deltaTime = Math.min(clock.getDelta(), 1 / 30); // Cap delta to prevent large jumps on tab resume
+
             // 1. Dissipate the existing density
             programs.dissipate.uniforms.uSource.value = density.read().texture;
-            programs.dissipate.uniforms.uDissipation.value = configRef.current.densityDissipation;
+            
+            // Frame-rate independent dissipation
+            // Assumes config.densityDissipation was tuned for 60fps.
+            const dissipation = Math.pow(configRef.current.densityDissipation, deltaTime * 60.0);
+            programs.dissipate.uniforms.uDissipation.value = dissipation;
+
             quad.material = programs.dissipate;
             renderStep(density.write());
             density.swap();
