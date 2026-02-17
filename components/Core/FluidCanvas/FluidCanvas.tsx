@@ -171,7 +171,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
                     const radiusInUV_Y = radiusInPixels / window.innerHeight;
 
                     // The interpolation step distance must be smaller than the radius to ensure overlap.
-                    const stepDistance = radiusInUV_Y * 0.5; // Half radius for a safe margin
+                    const stepDistance = radiusInUV_Y * 0.25; // Quarter radius for smoother, overlapping splats
                     const steps = Math.max(1, Math.ceil(dist / stepDistance));
 
                     for (let i = 0; i < steps; i++) {

@@ -40,7 +40,7 @@ const HomePage = () => {
     // Configuration for the fluid simulation.
     // densityDissipation controls how quickly the trail fades. A value closer to 1 means a longer trail.
     const config: Config = {
-        densityDissipation: 0.98, 
+        densityDissipation: 0.95, 
         splatRadius: 40,
     };
 

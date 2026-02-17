@@ -65,9 +65,9 @@ export const displayShader = `
         float distSq = dot(p, p);
         
         // The base threshold determines the edge of the fluid.
-        // We increase the threshold based on distance from the cursor,
-        // which makes the trail appear thinner at its 'foot'.
-        float threshold = 0.9 + distSq * 1.5;
+        // A higher base threshold (0.95) and distance multiplier (2.0)
+        // makes the shrink effect more aggressive and noticeable.
+        float threshold = 0.95 + distSq * 2.0;
 
         // Sharp threshold for a clean, vector-like appearance.
         float mask = smoothstep(threshold, threshold + 0.001, d); 
