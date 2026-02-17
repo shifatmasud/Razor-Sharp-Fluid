@@ -3,99 +3,30 @@ import React, { useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { 
     baseVertexShader, 
-    advectionShader, 
     splatShader, 
-    divergenceShader, 
-    pressureShader, 
-    gradientSubtractShader, 
-    condensationShader,
+    shrinkShader,
     displayShader 
 } from './shaders';
 
 interface FluidConfig {
-    densityDissipation: number;
-    velocityDissipation: number;
+    shrinkRate: number;
     splatRadius: number;
-    sizingMode?: 'CLAMP' | 'CONTAIN' | 'COVER';
 }
 
 interface FluidCanvasProps {
     config: FluidConfig;
-    onLog: (msg: string) => void;
-    variant: number;
 }
 
-const FluidCanvas: React.FC<FluidCanvasProps> = ({ config, onLog, variant }) => {
+const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
     const mountRef = useRef<HTMLDivElement>(null);
     const configRef = useRef(config);
-    const variantRef = useRef(variant);
-
-    const condensationStateRef = useRef({
-        active: false,
-        point: new THREE.Vector2(),
-        timer: 0,
-    });
-
-    // Refs to store textures so we can update their transform
-    const imageTextureRef = useRef<THREE.Texture | null>(null);
-    const coverTextureRef = useRef<THREE.Texture | null>(null);
 
     useEffect(() => { configRef.current = config; }, [config]);
-    useEffect(() => { variantRef.current = variant; }, [variant]);
-
-    // Helper to update texture matrix for sizing modes
-    const updateTextureTransform = (texture: THREE.Texture, width: number, height: number) => {
-        if (!texture.image || !texture.image.width) return;
-        
-        const mode = configRef.current.sizingMode || 'COVER';
-        const imageAspect = texture.image.width / texture.image.height;
-        const screenAspect = width / height;
-        
-        // Reset
-        texture.center.set(0.5, 0.5);
-        texture.rotation = 0;
-        texture.matrixAutoUpdate = true;
-        
-        if (mode === 'CONTAIN') {
-            // Fit entire image in screen (Letterboxing)
-            if (screenAspect > imageAspect) {
-                // Screen is wider: constrain width to match image aspect
-                // To make image smaller horizontally (to reveal sides), we increase repeat.x
-                texture.repeat.set(screenAspect / imageAspect, 1);
-            } else {
-                // Screen is taller: constrain height
-                texture.repeat.set(1, imageAspect / screenAspect);
-            }
-        } else if (mode === 'COVER') {
-             // Fill screen (Crop)
-             if (screenAspect > imageAspect) {
-                 // Screen is wider: zoom to width
-                 // To zoom in vertically (crop top/bottom), we reduce repeat.y
-                 texture.repeat.set(1, imageAspect / screenAspect);
-            } else {
-                 // Screen is taller: zoom to height
-                 texture.repeat.set(screenAspect / imageAspect, 1);
-            }
-        } else {
-            // CLAMP - Default to 1:1 mapping
-            texture.repeat.set(1, 1);
-        }
-    };
-
-    // Effect to handle Sizing Mode updates
-    useEffect(() => {
-        if (!mountRef.current) return;
-        const { width, height } = mountRef.current.getBoundingClientRect();
-        if (imageTextureRef.current) updateTextureTransform(imageTextureRef.current, width, height);
-        if (coverTextureRef.current) updateTextureTransform(coverTextureRef.current, width, height);
-    }, [config.sizingMode]);
 
     useEffect(() => {
         if (!mountRef.current) return;
         const container = mountRef.current;
         
-        onLog("Initializing Multi-Mode Fluid Solver...");
-
         const renderer = new THREE.WebGLRenderer({ 
             antialias: false, 
             alpha: false, 
@@ -107,7 +38,6 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config, onLog, variant }) => 
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         container.appendChild(renderer.domElement);
 
-        // High resolution for sharp edges
         const simRes = 512; 
         const aspectRatio = window.innerWidth / window.innerHeight;
 
@@ -115,7 +45,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config, onLog, variant }) => 
             type: THREE.HalfFloatType,
             format: THREE.RGBAFormat,
             minFilter: THREE.LinearFilter,
-            magFilter: THREE.LinearFilter,
+            magFilter: 'linear',
         });
 
         const createDoubleFBO = (w: number, h: number) => {
@@ -129,9 +59,6 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config, onLog, variant }) => 
         };
 
         let density = createDoubleFBO(simRes, simRes);
-        let velocity = createDoubleFBO(simRes, simRes);
-        let divergence = createFBO(simRes, simRes);
-        let pressure = createDoubleFBO(simRes, simRes);
 
         const geometry = new THREE.PlaneGeometry(2, 2);
         const scene = new THREE.Scene();
@@ -144,60 +71,25 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config, onLog, variant }) => 
             fragmentShader: frag,
             uniforms: {
                 uTexelSize: { value: new THREE.Vector2(1.0 / simRes, 1.0 / simRes) },
-                uDt: { value: 0.016 },
                 uAspectRatio: { value: aspectRatio },
-                uDissipation: { value: 1.0 },
-                uVelocity: { value: null },
-                uSource: { value: null },
                 uTarget: { value: null },
                 uColor: { value: new THREE.Vector3() },
                 uPoint: { value: new THREE.Vector2() },
                 uRadius: { value: 0.01 },
-                uStrength: { value: 0.0 },
-                uDivergence: { value: null },
-                uPressure: { value: null },
-                uImage: { value: null },
-                uCover: { value: null },
+                uSource: { value: null },
+                uShrinkRate: { value: 0.01 },
                 uDensity: { value: null },
-                uVariant: { value: 0 }
             },
             depthWrite: false,
             depthTest: false
         });
 
         const programs = {
-            advection: createProgram(advectionShader),
             splat: createProgram(splatShader),
-            divergence: createProgram(divergenceShader),
-            pressure: createProgram(pressureShader),
-            gradientSubtract: createProgram(gradientSubtractShader),
-            condensation: createProgram(condensationShader),
+            shrink: createProgram(shrinkShader),
             display: createProgram(displayShader)
         };
 
-        const loader = new THREE.TextureLoader();
-        
-        const setupTexture = (url: string, ref: React.MutableRefObject<THREE.Texture | null>) => {
-            return loader.load(url, (tex) => {
-                tex.minFilter = THREE.LinearFilter;
-                tex.magFilter = THREE.LinearFilter;
-                tex.wrapS = THREE.ClampToEdgeWrapping;
-                tex.wrapT = THREE.ClampToEdgeWrapping;
-                ref.current = tex;
-                updateTextureTransform(tex, window.innerWidth, window.innerHeight);
-            });
-        };
-
-        programs.display.uniforms.uImage.value = setupTexture(
-            'https://images.unsplash.com/photo-1605810230434-7631ac76ec81?q=80&w=2670&auto=format&fit=crop', 
-            imageTextureRef
-        );
-        programs.display.uniforms.uCover.value = setupTexture(
-            'https://images.unsplash.com/photo-1621193677209-c3060b6d0329?q=80&w=2660&auto=format&fit=crop', 
-            coverTextureRef
-        );
-
-        // Input Handling
         const pointer = new THREE.Vector2(0.5, 0.5);
         const lastPointer = new THREE.Vector2(0.5, 0.5);
         let isInteracting = false;
@@ -209,28 +101,19 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config, onLog, variant }) => 
         const onDown = (e: PointerEvent) => {
             if(!e.isPrimary) return;
             isInteracting = true;
-            condensationStateRef.current.active = false; // Cancel any ongoing condensation
             updatePointer(e.clientX, e.clientY);
-            
-            // Offset lastPointer slightly to force a splat on a static click
-            // The simulation loop compares pointer vs lastPointer to generate velocity.
-            lastPointer.set(pointer.x - 0.01, pointer.y - 0.01);
-            
+            lastPointer.copy(pointer);
             (e.target as Element).setPointerCapture(e.pointerId);
         };
 
         const onMove = (e: PointerEvent) => {
-            if(!e.isPrimary) return;
+            if(!e.isPrimary || !isInteracting) return;
             updatePointer(e.clientX, e.clientY);
         };
 
         const onUp = (e: PointerEvent) => { 
+            if(!e.isPrimary) return;
             isInteracting = false; 
-            condensationStateRef.current = {
-                active: true,
-                point: new THREE.Vector2().copy(pointer),
-                timer: 90 // Run for ~1.5 seconds at 60fps
-            };
             if (e.target instanceof Element && e.target.hasPointerCapture(e.pointerId)) {
                 e.target.releasePointerCapture(e.pointerId);
             }
@@ -240,11 +123,12 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config, onLog, variant }) => 
             const w = window.innerWidth;
             const h = window.innerHeight;
             renderer.setSize(w, h);
-            programs.display.uniforms.uAspectRatio.value = w / h;
-            
-            if (imageTextureRef.current) updateTextureTransform(imageTextureRef.current, w, h);
-            if (coverTextureRef.current) updateTextureTransform(coverTextureRef.current, w, h);
+            const newAspectRatio = w / h;
+            programs.splat.uniforms.uAspectRatio.value = newAspectRatio;
+            programs.display.uniforms.uAspectRatio.value = newAspectRatio;
         };
+
+        onResize();
 
         container.addEventListener('pointerdown', onDown);
         container.addEventListener('pointermove', onMove);
@@ -257,63 +141,39 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config, onLog, variant }) => 
             renderer.render(scene, camera);
         };
 
-        let lastTime = Date.now();
-
         const update = () => {
-            const now = Date.now();
-            let dt = Math.min((now - lastTime) / 1000, 0.016);
-            lastTime = now;
-
-            const currentVariant = variantRef.current;
+            requestAnimationFrame(update);
             
-            const condensationState = condensationStateRef.current;
-            if (condensationState.active && condensationState.timer > 0) {
-                programs.condensation.uniforms.uTarget.value = velocity.read().texture;
-                programs.condensation.uniforms.uPoint.value.copy(condensationState.point);
-                
-                // Strength fades out as timer decreases
-                const strength = (condensationState.timer / 90.0) * 0.03;
-                programs.condensation.uniforms.uStrength.value = strength;
-                programs.condensation.uniforms.uRadius.value = 0.02; // A bit larger than a splat
+            // 1. Shrink the existing texture
+            programs.shrink.uniforms.uSource.value = density.read().texture;
+            programs.shrink.uniforms.uShrinkRate.value = configRef.current.shrinkRate;
+            quad.material = programs.shrink;
+            renderStep(density.write());
+            density.swap();
 
-                quad.material = programs.condensation;
-                renderStep(velocity.write());
-                velocity.swap();
-
-                condensationState.timer--;
-                if (condensationState.timer <= 0) {
-                    condensationState.active = false;
-                }
-            }
-
-
+            // 2. Splat new density if interacting
             if (isInteracting) {
                 const dx = pointer.x - lastPointer.x;
                 const dy = pointer.y - lastPointer.y;
                 const distSq = dx*dx + dy*dy;
 
-                // Reduced threshold for interactivity
                 if (distSq > 0.000001) { 
                     const dist = Math.sqrt(distSq);
-                    const steps = Math.max(1, Math.ceil(dist / 0.002));
+                    const steps = Math.max(1, Math.ceil(dist / 0.005));
 
                     for (let i = 0; i < steps; i++) {
                         const t = (i + 1) / steps;
                         const lerpX = lastPointer.x + dx * t;
                         const lerpY = lastPointer.y + dy * t;
-
-                        programs.splat.uniforms.uTarget.value = velocity.read().texture;
-                        programs.splat.uniforms.uPoint.value.set(lerpX, lerpY);
-                        programs.splat.uniforms.uColor.value.set(dx * 5000.0, dy * 5000.0, 1.0);
-                        programs.splat.uniforms.uRadius.value = configRef.current.splatRadius / 10000.0;
-                        quad.material = programs.splat;
-                        renderStep(velocity.write());
-                        velocity.swap();
-
+                        
                         programs.splat.uniforms.uTarget.value = density.read().texture;
                         programs.splat.uniforms.uPoint.value.set(lerpX, lerpY);
-                        programs.splat.uniforms.uColor.value.set(5.0, 5.0, 5.0);
-                        programs.splat.uniforms.uRadius.value = configRef.current.splatRadius / 5000.0;
+                        programs.splat.uniforms.uColor.value.set(1.0, 1.0, 1.0);
+                        
+                        const radiusInPixels = configRef.current.splatRadius;
+                        const radiusInUV = radiusInPixels / window.innerHeight;
+                        programs.splat.uniforms.uRadius.value = radiusInUV * radiusInUV;
+
                         quad.material = programs.splat;
                         renderStep(density.write());
                         density.swap();
@@ -322,49 +182,11 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config, onLog, variant }) => 
                 lastPointer.copy(pointer);
             }
 
-            if (currentVariant !== 0) {
-                programs.divergence.uniforms.uVelocity.value = velocity.read().texture;
-                quad.material = programs.divergence;
-                renderStep(divergence);
-
-                programs.pressure.uniforms.uDivergence.value = divergence.texture;
-                quad.material = programs.pressure;
-                for (let i = 0; i < 50; i++) {
-                    programs.pressure.uniforms.uPressure.value = pressure.read().texture;
-                    renderStep(pressure.write());
-                    pressure.swap();
-                }
-
-                programs.gradientSubtract.uniforms.uPressure.value = pressure.read().texture;
-                programs.gradientSubtract.uniforms.uVelocity.value = velocity.read().texture;
-                quad.material = programs.gradientSubtract;
-                renderStep(velocity.write());
-                velocity.swap();
-            }
-
-            programs.advection.uniforms.uDt.value = dt;
-            programs.advection.uniforms.uDissipation.value = configRef.current.velocityDissipation; 
-            programs.advection.uniforms.uSource.value = velocity.read().texture;
-            programs.advection.uniforms.uVelocity.value = velocity.read().texture;
-            quad.material = programs.advection;
-            renderStep(velocity.write());
-            velocity.swap();
-
-            programs.advection.uniforms.uDissipation.value = configRef.current.densityDissipation;
-            programs.advection.uniforms.uSource.value = density.read().texture;
-            programs.advection.uniforms.uVelocity.value = velocity.read().texture;
-            quad.material = programs.advection;
-            renderStep(density.write());
-            density.swap();
-
+            // 3. Render to screen
             programs.display.uniforms.uDensity.value = density.read().texture;
-            programs.display.uniforms.uVelocity.value = velocity.read().texture;
-            programs.display.uniforms.uPressure.value = pressure.read().texture;
-            programs.display.uniforms.uVariant.value = currentVariant;
+            programs.display.uniforms.uPoint.value.copy(pointer);
             quad.material = programs.display;
             renderStep(null);
-
-            requestAnimationFrame(update);
         };
 
         update();
@@ -377,6 +199,8 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config, onLog, variant }) => 
             container.removeEventListener('pointerleave', onUp);
             window.removeEventListener('resize', onResize);
             renderer.dispose();
+            density.read().dispose();
+            density.write().dispose();
         };
     }, []);
 
@@ -394,7 +218,8 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config, onLog, variant }) => 
                 userSelect: 'none',
                 WebkitUserSelect: 'none',
                 cursor: 'crosshair',
-                pointerEvents: 'auto'
+                pointerEvents: 'auto',
+                backgroundColor: '#000000'
             }} 
         />
     );

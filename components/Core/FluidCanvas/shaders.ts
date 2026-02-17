@@ -19,179 +19,62 @@ export const splatShader = `
     void main() {
         vec2 p = vUv - uPoint.xy;
         p.x *= uAspectRatio;
+        // Additive blending to "paint" the splat onto the texture
         vec3 splat = exp(-dot(p, p) / uRadius) * uColor;
         vec3 base = texture2D(uTarget, vUv).xyz;
         gl_FragColor = vec4(base + splat, 1.0);
     }
 `;
 
-export const divergenceShader = `
-    uniform sampler2D uVelocity;
-    uniform vec2 uTexelSize;
-
-    varying vec2 vUv;
-
-    void main() {
-        float L = texture2D(uVelocity, vUv - vec2(uTexelSize.x, 0.0)).x;
-        float R = texture2D(uVelocity, vUv + vec2(uTexelSize.x, 0.0)).x;
-        float T = texture2D(uVelocity, vUv + vec2(0.0, uTexelSize.y)).y;
-        float B = texture2D(uVelocity, vUv - vec2(0.0, uTexelSize.y)).y;
-
-        float C = texture2D(uVelocity, vUv).x;
-
-        vec2 velocity = texture2D(uVelocity, vUv).xy;
-        
-        // Divergence
-        float div = 0.5 * (R - L + T - B);
-        gl_FragColor = vec4(div, 0.0, 0.0, 1.0);
-    }
-`;
-
-export const pressureShader = `
-    uniform sampler2D uPressure;
-    uniform sampler2D uDivergence;
-    uniform vec2 uTexelSize;
-
-    varying vec2 vUv;
-
-    void main() {
-        float L = texture2D(uPressure, vUv - vec2(uTexelSize.x, 0.0)).x;
-        float R = texture2D(uPressure, vUv + vec2(uTexelSize.x, 0.0)).x;
-        float T = texture2D(uPressure, vUv + vec2(0.0, uTexelSize.y)).x;
-        float B = texture2D(uPressure, vUv - vec2(0.0, uTexelSize.y)).x;
-        float C = texture2D(uDivergence, vUv).x;
-
-        float pressure = (L + R + B + T - C) * 0.25;
-        gl_FragColor = vec4(pressure, 0.0, 0.0, 1.0);
-    }
-`;
-
-export const gradientSubtractShader = `
-    uniform sampler2D uPressure;
-    uniform sampler2D uVelocity;
-    uniform vec2 uTexelSize;
-
-    varying vec2 vUv;
-
-    void main() {
-        float L = texture2D(uPressure, vUv - vec2(uTexelSize.x, 0.0)).x;
-        float R = texture2D(uPressure, vUv + vec2(uTexelSize.x, 0.0)).x;
-        float T = texture2D(uPressure, vUv + vec2(0.0, uTexelSize.y)).x;
-        float B = texture2D(uPressure, vUv - vec2(0.0, uTexelSize.y)).x;
-
-        vec2 velocity = texture2D(uVelocity, vUv).xy;
-        velocity.xy -= vec2(R - L, T - B);
-        gl_FragColor = vec4(velocity, 0.0, 1.0);
-    }
-`;
-
-export const advectionShader = `
-    uniform sampler2D uVelocity;
+// New shader for a shrinking/erosion effect
+export const shrinkShader = `
     uniform sampler2D uSource;
-    uniform vec2 uTexelSize;
-    uniform float uDt;
-    uniform float uDissipation;
-
+    uniform float uShrinkRate;
     varying vec2 vUv;
 
     void main() {
-        vec2 coord = vUv - uDt * texture2D(uVelocity, vUv).xy * uTexelSize;
-        vec4 result = texture2D(uSource, coord);
-        // Direct multiplication for precise decay control
-        gl_FragColor = result * uDissipation;
-    }
-`;
-
-export const condensationShader = `
-    uniform sampler2D uTarget;
-    uniform float uAspectRatio;
-    uniform vec2 uPoint;
-    uniform float uRadius;
-    uniform float uStrength;
-
-    varying vec2 vUv;
-
-    void main() {
-        vec2 p = vUv - uPoint.xy;
-        p.x *= uAspectRatio;
-
-        // Direction from current fragment TO the point
-        vec2 dir = uPoint.xy - vUv;
-        dir.x *= uAspectRatio;
-
-        float dist = length(dir);
-        // Avoid division by zero and normalize
-        if (dist > 0.0001) {
-            dir /= dist;
-        }
-
-        // A smooth falloff for the force field
-        float falloff = exp(-dot(p, p) / uRadius);
-
-        // The inward velocity to add
-        vec2 inward_vel = dir * uStrength * falloff;
-
-        // Add to the base velocity
-        vec2 base = texture2D(uTarget, vUv).xy;
-        gl_FragColor = vec4(base + inward_vel, 0.0, 1.0);
+        vec4 color = texture2D(uSource, vUv);
+        // Subtract a constant value to "erode" the trail
+        color.rgb -= uShrinkRate;
+        // Clamp at zero to prevent negative color values
+        color.rgb = max(color.rgb, 0.0);
+        gl_FragColor = color;
     }
 `;
 
 export const displayShader = `
     uniform sampler2D uDensity;
-    uniform sampler2D uVelocity;
-    uniform sampler2D uPressure;
-    uniform sampler2D uImage;
-    uniform sampler2D uCover;
-    uniform int uVariant; // 0: Razor, 1: Soft, 2: Liquid, 3: Pressure, 4: Neon
+    uniform vec2 uTexelSize;
+    uniform vec2 uPoint;
+    uniform float uAspectRatio;
 
     varying vec2 vUv;
 
     void main() {
-        vec3 density = texture2D(uDensity, vUv).rgb;
-        float d = density.r;
-        vec2 vel = texture2D(uVelocity, vUv).xy;
+        float d = 0.0;
         
-        vec3 finalColor = vec3(0.0);
-        vec3 cover = texture2D(uCover, vUv).rgb;
+        // 3x3 Max Filter (a simple morphological dilation)
+        // to fill in small holes and keep the trail solid.
+        for (int i = -1; i <= 1; i++) {
+            for (int j = -1; j <= 1; j++) {
+                vec2 offset = vec2(float(i), float(j)) * uTexelSize;
+                d = max(d, texture2D(uDensity, vUv + offset).r);
+            }
+        }
+        
+        vec2 p = vUv - uPoint;
+        p.x *= uAspectRatio;
+        float distSq = dot(p, p);
+        
+        // The base threshold determines the edge of the fluid.
+        // We increase the threshold based on distance from the cursor,
+        // which makes the trail appear thinner at its 'foot'.
+        float threshold = 0.9 + distSq * 1.5;
 
-        // Variant 0: Razor (High-Threshold / Shrinking Droplet)
-        if (uVariant == 0) {
-            // Shrinking Droplet Technique:
-            // We splat a density of 5.0, but cut off at 0.9.
-            // As density decays, the "visible blob" shrinks geometrically.
-            // This creates a super clean, curvy, fractal-less sharp trail.
-            float mask = smoothstep(0.9, 0.92, d); 
-            vec3 img = texture2D(uImage, vUv).rgb;
-            finalColor = mix(cover, img, mask);
-        }
-        // Variant 1: Soft (Smoke Reveal)
-        else if (uVariant == 1) {
-            float mask = smoothstep(0.0, 0.5, d);
-            vec3 img = texture2D(uImage, vUv).rgb;
-            finalColor = mix(cover, img, mask);
-        }
-        // Variant 2: Liquid (Heavy Refraction)
-        else if (uVariant == 2) {
-            vec2 distUv = vUv + vel * 0.01;
-            vec3 img = texture2D(uImage, distUv).rgb;
-            float mask = smoothstep(0.0, 0.2, d);
-            finalColor = mix(cover, img, mask);
-        }
-        // Variant 3: Pressure (Debug Visualization)
-        else if (uVariant == 3) {
-            float p = texture2D(uPressure, vUv).x;
-            finalColor = vec3(p * 2.0 + 0.5, 0.0, -p * 2.0 + 0.5);
-            finalColor += d * 0.2;
-        }
-        // Variant 4: Neon (Chromatic Glow)
-        else if (uVariant == 4) {
-            vec3 img = texture2D(uImage, vUv).rgb;
-            float mask = smoothstep(0.05, 0.3, d);
-            float edge = smoothstep(0.05, 0.1, d) - smoothstep(0.2, 0.3, d);
-            vec3 glow = vec3(0.0, 1.0, 1.0) * edge * 2.0;
-            finalColor = mix(cover, img, mask) + glow;
-        }
+        // Sharp threshold for a clean, vector-like appearance.
+        float mask = smoothstep(threshold, threshold + 0.001, d); 
+        
+        vec3 finalColor = vec3(mask);
 
         gl_FragColor = vec4(finalColor, 1.0);
     }
