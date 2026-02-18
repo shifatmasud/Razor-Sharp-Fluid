@@ -15,11 +15,13 @@ interface FluidConfig {
 
 interface FluidCanvasProps {
     config: FluidConfig;
+    imageUrl: string;
 }
 
-const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
+const FluidCanvas: React.FC<FluidCanvasProps> = ({ config, imageUrl }) => {
     const mountRef = useRef<HTMLDivElement>(null);
     const configRef = useRef(config);
+    const canvasSizeRef = useRef({ width: window.innerWidth, height: window.innerHeight });
 
     useEffect(() => { configRef.current = config; }, [config]);
 
@@ -34,12 +36,11 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             depth: false,
             stencil: false
         });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        container.appendChild(renderer.domElement);
+        const canvas = renderer.domElement;
+        container.appendChild(canvas);
 
-        const simRes = 512; 
-        let aspectRatio = window.innerWidth / window.innerHeight;
+        const simRes = 512;
+        let imageAspectRatio = 1.0; 
 
         const createFBO = (w: number, h: number) => new THREE.WebGLRenderTarget(w, h, {
             type: THREE.HalfFloatType,
@@ -71,7 +72,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             fragmentShader: frag,
             uniforms: {
                 uTexelSize: { value: new THREE.Vector2(1.0 / simRes, 1.0 / simRes) },
-                uAspectRatio: { value: aspectRatio },
+                uAspectRatio: { value: imageAspectRatio },
                 uTarget: { value: null },
                 uColor: { value: new THREE.Vector3() },
                 uPoint: { value: new THREE.Vector2() },
@@ -79,6 +80,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
                 uSource: { value: null },
                 uDissipation: { value: 0.98 },
                 uDensity: { value: null },
+                uImage: { value: null },
             },
             depthWrite: false,
             depthTest: false
@@ -95,7 +97,14 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
         let isInteracting = false;
 
         const updatePointer = (x: number, y: number) => {
-            pointer.set(x / window.innerWidth, 1.0 - (y / window.innerHeight));
+            const rect = canvas.getBoundingClientRect();
+            const newX = (x - rect.left) / rect.width;
+            const newY = 1.0 - ((y - rect.top) / rect.height);
+
+            // Only update if the pointer is within the canvas bounds
+            if (newX >= 0 && newX <= 1 && newY >= 0 && newY <= 1) {
+                pointer.set(newX, newY);
+            }
         };
 
         const onDown = (e: PointerEvent) => {
@@ -119,22 +128,48 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             }
         };
 
-        const onResize = () => {
-            const w = window.innerWidth;
-            const h = window.innerHeight;
-            renderer.setSize(w, h);
-            aspectRatio = w / h;
-            programs.splat.uniforms.uAspectRatio.value = aspectRatio;
-            programs.display.uniforms.uAspectRatio.value = aspectRatio;
+        const handleResize = () => {
+            if (!mountRef.current) return;
+            const containerWidth = mountRef.current.clientWidth;
+            const containerHeight = mountRef.current.clientHeight;
+            const containerAspect = containerWidth / containerHeight;
+        
+            let canvasWidth, canvasHeight;
+        
+            if (containerAspect > imageAspectRatio) {
+                // Container is wider than the image -> letterbox horizontally
+                canvasHeight = containerHeight;
+                canvasWidth = canvasHeight * imageAspectRatio;
+            } else {
+                // Container is taller than the image -> letterbox vertically
+                canvasWidth = containerWidth;
+                canvasHeight = canvasWidth / imageAspectRatio;
+            }
+        
+            renderer.setSize(canvasWidth, canvasHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            canvasSizeRef.current = { width: canvasWidth, height: canvasHeight };
+            
+            // The aspect ratio for the shaders is now always the image's aspect ratio
+            programs.splat.uniforms.uAspectRatio.value = imageAspectRatio;
+            programs.display.uniforms.uAspectRatio.value = imageAspectRatio;
         };
 
-        onResize();
+        const textureLoader = new THREE.TextureLoader();
+        const imageTexture = textureLoader.load(imageUrl, (texture) => {
+            imageAspectRatio = texture.image.naturalWidth / texture.image.naturalHeight;
+            programs.display.uniforms.uImage.value = texture;
+            handleResize(); // Initial resize once image is loaded
+        });
+        imageTexture.colorSpace = THREE.SRGBColorSpace;
+        
+        const resizeObserver = new ResizeObserver(handleResize);
+        resizeObserver.observe(container);
 
         container.addEventListener('pointerdown', onDown);
         container.addEventListener('pointermove', onMove);
         container.addEventListener('pointerup', onUp);
         container.addEventListener('pointerleave', onUp);
-        window.addEventListener('resize', onResize);
 
         const renderStep = (target: THREE.WebGLRenderTarget | null) => {
             renderer.setRenderTarget(target);
@@ -146,41 +181,26 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
         const update = () => {
             requestAnimationFrame(update);
             
-            const deltaTime = Math.min(clock.getDelta(), 1 / 30); // Cap delta to prevent large jumps on tab resume
+            const deltaTime = Math.min(clock.getDelta(), 1 / 30);
 
-            // 1. Dissipate the existing density
             programs.dissipate.uniforms.uSource.value = density.read().texture;
-            
-            // Frame-rate independent dissipation
-            // Assumes config.densityDissipation was tuned for 60fps.
             const dissipation = Math.pow(configRef.current.densityDissipation, deltaTime * 60.0);
             programs.dissipate.uniforms.uDissipation.value = dissipation;
-
             quad.material = programs.dissipate;
             renderStep(density.write());
             density.swap();
 
-            // 2. Splat new density if interacting
             if (isInteracting) {
                 const dx = pointer.x - lastPointer.x;
                 const dy = pointer.y - lastPointer.y;
-
-                // Correct distance for aspect ratio. This treats the distance
-                // in a space that is uniform, matching how it appears on screen.
-                const dxCorrected = dx * aspectRatio;
+                const dxCorrected = dx * imageAspectRatio;
                 const distSq = dxCorrected * dxCorrected + dy * dy;
 
                 if (distSq > 0.000001) {
                     const dist = Math.sqrt(distSq);
-
-                    // The splat radius is defined in pixels. To compare it with our corrected
-                    // distance, we need to convert it to the same coordinate space. Since our
-                    // corrected distance is relative to screen height, we do the same for the radius.
                     const radiusInPixels = configRef.current.splatRadius;
-                    const radiusInUV_Y = radiusInPixels / window.innerHeight;
-
-                    // The interpolation step distance must be smaller than the radius to ensure overlap.
-                    const stepDistance = radiusInUV_Y * 0.25; // Quarter radius for smoother, overlapping splats
+                    const radiusInUV_Y = radiusInPixels / canvasSizeRef.current.height;
+                    const stepDistance = radiusInUV_Y * 0.25;
                     const steps = Math.max(1, Math.ceil(dist / stepDistance));
 
                     for (let i = 0; i < steps; i++) {
@@ -191,8 +211,6 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
                         programs.splat.uniforms.uTarget.value = density.read().texture;
                         programs.splat.uniforms.uPoint.value.set(lerpX, lerpY);
                         programs.splat.uniforms.uColor.value.set(1.0, 1.0, 1.0);
-                        
-                        // The splat radius uniform expects a squared value.
                         programs.splat.uniforms.uRadius.value = radiusInUV_Y * radiusInUV_Y;
 
                         quad.material = programs.splat;
@@ -203,7 +221,6 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
                 lastPointer.copy(pointer);
             }
 
-            // 3. Render to screen
             programs.display.uniforms.uDensity.value = density.read().texture;
             programs.display.uniforms.uPoint.value.copy(pointer);
             quad.material = programs.display;
@@ -214,16 +231,17 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
 
         return () => {
             if (mountRef.current) mountRef.current.removeChild(renderer.domElement);
+            resizeObserver.disconnect();
             container.removeEventListener('pointerdown', onDown);
             container.removeEventListener('pointermove', onMove);
             container.removeEventListener('pointerup', onUp);
             container.removeEventListener('pointerleave', onUp);
-            window.removeEventListener('resize', onResize);
             renderer.dispose();
             density.read().dispose();
             density.write().dispose();
+            imageTexture.dispose();
         };
-    }, []);
+    }, [imageUrl]);
 
     return (
         <div 
@@ -233,7 +251,10 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
                 top: 0,
                 left: 0,
                 width: '100%', 
-                height: '100%', 
+                height: '100%',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
                 zIndex: 0,
                 touchAction: 'none',
                 userSelect: 'none',

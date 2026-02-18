@@ -1,5 +1,5 @@
 {
   "name": "Interactive Fluid Trails",
-  "description": "An immersive, full-screen fluid dynamics simulation that responds to mouse movements, creating beautiful, ephemeral trails. Built with React, Three.js, and GLSL shaders.",
+  "description": "An immersive, full-screen fluid dynamics simulation where you can paint with smoke-like trails to reveal a hidden image. Built with React, Three.js, and GLSL shaders.",
   "requestFramePermissions": []
 }

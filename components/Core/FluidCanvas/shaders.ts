@@ -42,6 +42,7 @@ export const dissipationShader = `
 
 export const displayShader = `
     uniform sampler2D uDensity;
+    uniform sampler2D uImage;
     uniform vec2 uTexelSize;
     uniform vec2 uPoint;
     uniform float uAspectRatio;
@@ -72,7 +73,10 @@ export const displayShader = `
         // Sharp threshold for a clean, vector-like appearance.
         float mask = smoothstep(threshold, threshold + 0.001, d); 
         
-        vec3 finalColor = vec3(mask);
+        vec4 imageColor = texture2D(uImage, vUv);
+        vec3 backgroundColor = vec3(0.0);
+
+        vec3 finalColor = mix(backgroundColor, imageColor.rgb, mask);
 
         gl_FragColor = vec4(finalColor, 1.0);
     }

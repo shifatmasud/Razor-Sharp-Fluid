@@ -1,7 +1,7 @@
 
 # Interactive Fluid Trails
 
-An immersive, full-screen fluid dynamics simulation that responds to mouse movements, creating beautiful, ephemeral trails. Built with React, Three.js, and GLSL shaders.
+An immersive, full-screen fluid dynamics simulation that responds to mouse movements, creating beautiful, ephemeral trails that reveal a hidden image. Built with React, Three.js, and GLSL shaders.
 
 This project demonstrates a performant method for creating GPU-accelerated fluid effects on the web by using a ping-pong buffer technique with WebGL render targets. The simulation state is stored in a texture, which is passed back into the shader on the next frame to create a sense of persistence and decay.
 

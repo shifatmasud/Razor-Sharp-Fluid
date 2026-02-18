@@ -44,9 +44,11 @@ const HomePage = () => {
         splatRadius: 40,
     };
 
+    const imageUrl = 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?q=80&w=2070&auto=format&fit=crop';
+
     return (
         <div style={{ position: 'relative', width: '100vw', height: '100vh', backgroundColor: theme.colors.base.surface[1], overflow: 'hidden' }}>
-            <FluidCanvas config={config} />
+            <FluidCanvas config={config} imageUrl={imageUrl} />
             <Header />
         </div>
     );
