@@ -115,6 +115,8 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
                 uParallaxStrength: { value: 0.05 },
                 uTransition: { value: 0.0 },
                 uResolution: { value: new THREE.Vector2(1, 1) },
+                uTime: { value: 0.0 },
+                uIsInteracting: { value: 0.0 },
             },
             depthWrite: false,
             depthTest: false
@@ -153,6 +155,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
         const lastPointer = new THREE.Vector2(0.5, 0.5);
         const targetParallax = new THREE.Vector2(0.5, 0.5);
         let transition = 0;
+        let lerpedInteraction = 0;
         let isInteracting = false;
         let isMouseOver = false;
         let isMouse = false;
@@ -270,6 +273,10 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             const targetTransition = isMouseOver ? 1.0 : 0.0;
             transition += (targetTransition - transition) * 0.05;
 
+            // Lerp interaction factor for smooth scan waves
+            const targetInteraction = isInteracting ? 1.0 : 0.0;
+            lerpedInteraction += (targetInteraction - lerpedInteraction) * 0.04;
+
             // Smoothing pass for depth map (Two-pass separable Gaussian)
             // Pass 1: Horizontal
             programs.blur.uniforms.uTexture.value = depthTexture;
@@ -351,6 +358,9 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             });
 
             quad.material = programs.display;
+            programs.display.uniforms.uTime.value = clock.elapsedTime;
+            programs.display.uniforms.uIsInteracting.value = lerpedInteraction;
+            
             renderStep(null);
         };
 

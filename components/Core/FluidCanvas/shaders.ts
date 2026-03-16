@@ -88,6 +88,9 @@ export const displayShader = `
     uniform float uImageAspectRatio;
     uniform float uTransition;
 
+    uniform float uTime;
+    uniform float uIsInteracting;
+
     varying vec2 vUv;
     varying vec2 vScreenUv;
 
@@ -126,7 +129,7 @@ export const displayShader = `
         vec2 coverUV = getCoverUV(uv, uAspectRatio, uImageAspectRatio);
         
         float d = 0.0;
-        // Sample density using screen-space UV to keep it static/locked to mouse
+        // Sample density
         for (int i = -1; i <= 1; i++) {
             for (int j = -1; j <= 1; j++) {
                 vec2 offset = vec2(float(i), float(j)) * uTexelSize;
@@ -134,17 +137,41 @@ export const displayShader = `
             }
         }
         
+        // Apply a power curve to the density to make it "compress" inward as it fades
+        // This ensures the edges die faster than the core, creating a shrinking effect
+        d = pow(d, 1.5);
+        
         // Distance in screen space (0-1 range)
         vec2 p = uvScreen - uPoint;
         p.x *= uAspectRatio;
         float distSq = dot(p, p);
         
         float threshold = 0.95 + distSq * 2.0;
-        float mask = smoothstep(threshold, threshold + 0.001, d); 
+        // Sharper mask that contracts as density drops, but with enough feathering for smoothness
+        float mask = smoothstep(threshold - 0.05, threshold + 0.05, d); 
         
         vec4 imageColor = texture2D(uImage, coverUV);
         float depthRaw = texture2D(uDepthMap, coverUV).r;
         vec3 depthCinematic = colorRamp(depthRaw);
+        
+        // Depth Scan Effect
+        // A moving wave that highlights depth levels when interacting
+        float scanPos = mod(uTime * 0.4, 1.2) - 0.1; 
+        
+        // Performance tradeoff: wider smoothstep for "diffused" look
+        // This simulates a blurry scanline without expensive multi-sampling
+        float scanWidth = 0.02;
+        float scanEdge = 0.08; 
+        float scanLine = smoothstep(scanPos - scanWidth - scanEdge, scanPos - scanWidth, depthRaw) * 
+                         (1.0 - smoothstep(scanPos, scanPos + scanEdge, depthRaw));
+        
+        // Add a secondary faster wave for more tech feel
+        float scanPos2 = mod(uTime * 0.8, 1.4) - 0.2;
+        float scanLine2 = smoothstep(scanPos2 - 0.04, scanPos2 - 0.01, depthRaw) * 
+                          (1.0 - smoothstep(scanPos2, scanPos2 + 0.01, depthRaw));
+        
+        // White color, subtle opacity, controlled by lerped interaction
+        vec3 scanColor = vec3(1.0) * (scanLine * 0.3 + scanLine2 * 0.15) * uIsInteracting;
         
         // Calculate normals from depth map for subtle lighting
         float off = 1.0 / 512.0;
@@ -160,6 +187,7 @@ export const displayShader = `
         float lighting = mix(1.0, ambient + diff * 0.15, uTransition);
 
         vec3 finalColor = mix(imageColor.rgb, depthCinematic, mask);
+        finalColor += scanColor * (1.0 - mask); // Only show scan on revealed depth
         finalColor *= lighting;
 
         gl_FragColor = vec4(finalColor, 1.0);
