@@ -114,6 +114,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
                 uMouse: { value: new THREE.Vector2(0.5, 0.5) },
                 uParallaxStrength: { value: 0.05 },
                 uTransition: { value: 0.0 },
+                uResolution: { value: new THREE.Vector2(1, 1) },
             },
             depthWrite: false,
             depthTest: false
@@ -140,6 +141,12 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
         const blurQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), programs.blur);
         blurScene.add(blurQuad);
         const blurCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+        // Dedicated simulation scene and camera to ensure fluid mask is independent of 3D view
+        const simScene = new THREE.Scene();
+        const simQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial()) as any;
+        simScene.add(simQuad);
+        const simCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
         const pointer = new THREE.Vector2(0.5, 0.5);
         const lerpedPointer = new THREE.Vector2(0.5, 0.5);
@@ -218,7 +225,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
         Object.values(programs).forEach(p => {
             if (p.uniforms.uDepthMap) p.uniforms.uDepthMap.value = smoothDepthFBO.texture;
             if (p.uniforms.uMouse) p.uniforms.uMouse.value = pointer;
-            if (p.uniforms.uParallaxStrength) p.uniforms.uParallaxStrength.value = 0.15; 
+            if (p.uniforms.uParallaxStrength) p.uniforms.uParallaxStrength.value = 0.25; 
         });
 
         handleResize();
@@ -230,6 +237,12 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
         container.addEventListener('pointermove', onMove);
         container.addEventListener('pointerup', onUp);
         container.addEventListener('pointerleave', onLeave);
+
+        const renderSimStep = (target: THREE.WebGLRenderTarget | null, material: THREE.ShaderMaterial) => {
+            simQuad.material = material;
+            renderer.setRenderTarget(target);
+            renderer.render(simScene, simCamera);
+        };
 
         const renderStep = (target: THREE.WebGLRenderTarget | null) => {
             renderer.setRenderTarget(target);
@@ -273,8 +286,8 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             programs.dissipate.uniforms.uSource.value = density.read().texture;
             const dissipation = Math.pow(configRef.current.densityDissipation, deltaTime * 60.0);
             programs.dissipate.uniforms.uDissipation.value = dissipation;
-            quad.material = programs.dissipate;
-            renderStep(density.write());
+            
+            renderSimStep(density.write(), programs.dissipate);
             density.swap();
 
             // Splat on interaction (click/drag) or just mouse move
@@ -310,8 +323,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
                     programs.splat.uniforms.uColor.value.set(intensity, intensity, intensity);
                     programs.splat.uniforms.uRadius.value = radiusInUV_Y * radiusInUV_Y;
 
-                    quad.material = programs.splat;
-                    renderStep(density.write());
+                    renderSimStep(density.write(), programs.splat);
                     density.swap();
                 }
             }
@@ -319,10 +331,17 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
 
             programs.display.uniforms.uDensity.value = density.read().texture;
             programs.display.uniforms.uPoint.value.copy(pointer);
+            programs.display.uniforms.uResolution.value.set(canvasSizeRef.current.width, canvasSizeRef.current.height);
             
-            // Subtle rotation for 3D feel
-            quad.rotation.y = (lerpedPointer.x - 0.5) * 0.15;
-            quad.rotation.x = (lerpedPointer.y - 0.5) * -0.15;
+            // Enhanced camera parallax for depth separation
+            camera.position.x = (lerpedPointer.x - 0.5) * 0.4;
+            camera.position.y = (lerpedPointer.y - 0.5) * -0.4;
+            camera.lookAt(0, 0, 0);
+
+            // Enhanced rotation for 3D feel (sideways and up/down)
+            quad.rotation.y = (lerpedPointer.x - 0.5) * 0.25;
+            quad.rotation.x = (lerpedPointer.y - 0.5) * -0.25;
+            quad.rotation.z = (lerpedPointer.x - 0.5) * 0.05; // Subtle roll for extra sideways feel
 
             // Update mouse and transition for parallax in all programs using the lerped pointer
             Object.values(programs).forEach(p => {

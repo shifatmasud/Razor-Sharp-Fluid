@@ -2,10 +2,7 @@
 export const baseVertexShader = `
     varying vec2 vUv;
     varying vec2 vScreenUv;
-    varying vec2 vDisplacement;
     uniform sampler2D uDepthMap;
-    uniform vec2 uMouse;
-    uniform float uParallaxStrength;
     uniform float uAspectRatio;
     uniform float uImageAspectRatio;
     uniform float uTransition;
@@ -26,24 +23,18 @@ export const baseVertexShader = `
         vUv = uv;
         vec2 coverUV = getCoverUV(uv, uAspectRatio, uImageAspectRatio);
         
-        // Sampling depth map
+        // Sampling depth map for vertex deformation
         float depth = texture2D(uDepthMap, coverUV).r;
 
-        // Pure physical vertex deformation
-        // No artificial XY displacement, no rotation-based parallax
-        // The depth is expressed purely through Z-axis displacement
-        vDisplacement = vec2(0.0);
-        
         vec3 newPosition = position;
         
         // Physical Z-axis push based on depth map
         // This creates real 3D geometry
         newPosition.z += depth * 0.4 * uTransition; 
         
-        vec4 mvPosition = modelViewMatrix * vec4(newPosition, 1.0);
-        gl_Position = projectionMatrix * mvPosition;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(newPosition, 1.0);
         
-        // Calculate screen-space UV for parallax-invariant sampling
+        // Calculate screen-space UV for parallax-invariant sampling of the fluid mask
         vScreenUv = (gl_Position.xy / gl_Position.w) * 0.5 + 0.5;
     }
 `;
@@ -92,13 +83,13 @@ export const displayShader = `
     uniform sampler2D uDepthMap;
     uniform vec2 uTexelSize;
     uniform vec2 uPoint;
+    uniform vec2 uResolution;
     uniform float uAspectRatio;
     uniform float uImageAspectRatio;
     uniform float uTransition;
 
     varying vec2 vUv;
     varying vec2 vScreenUv;
-    varying vec2 vDisplacement;
 
     vec2 getCoverUV(vec2 uv, float screenAspect, float imageAspect) {
         vec2 res = uv;
@@ -113,14 +104,16 @@ export const displayShader = `
     }
 
     void main() {
-        vec2 coverUV = getCoverUV(vUv, uAspectRatio, uImageAspectRatio);
+        // Use gl_FragCoord to get the absolute screen position
+        // This truly separates the fluid mask from the 3D camera/vertex deformation
+        vec2 uvScreen = gl_FragCoord.xy / uResolution;
         
-        // Use screen-space UV to sample the fluid density
-        // This ensures the fluid trail ignores the 3D vertex parallax
-        vec2 uvScreen = vScreenUv;
+        // Use mesh UV for the image (which has the 3D deformation)
+        vec2 uv = vUv;
+        vec2 coverUV = getCoverUV(uv, uAspectRatio, uImageAspectRatio);
         
         float d = 0.0;
-        // Sample density using screen-space UV to keep it static
+        // Sample density using screen-space UV to keep it static/locked to mouse
         for (int i = -1; i <= 1; i++) {
             for (int j = -1; j <= 1; j++) {
                 vec2 offset = vec2(float(i), float(j)) * uTexelSize;
@@ -128,7 +121,7 @@ export const displayShader = `
             }
         }
         
-        // Distance in screen space
+        // Distance in screen space (0-1 range)
         vec2 p = uvScreen - uPoint;
         p.x *= uAspectRatio;
         float distSq = dot(p, p);
@@ -146,15 +139,12 @@ export const displayShader = `
         float dT = texture2D(uDepthMap, coverUV + vec2(0.0, off)).r;
         float dB = texture2D(uDepthMap, coverUV + vec2(0.0, -off)).r;
         
-        // Scale normal by transition to flatten it when inactive
         vec3 normal = normalize(vec3((dL - dR) * uTransition * 2.0, (dB - dT) * uTransition * 2.0, 1.0));
         vec3 lightDir = normalize(vec3(0.5, 0.5, 1.0));
         float diff = max(dot(normal, lightDir), 0.0);
         float ambient = 0.85;
         float lighting = mix(1.0, ambient + diff * 0.15, uTransition);
 
-        // Visible: the texture
-        // Hidden (revealed by trail): the depth map
         vec3 finalColor = mix(imageColor.rgb, depthColor.rgb, mask);
         finalColor *= lighting;
 
