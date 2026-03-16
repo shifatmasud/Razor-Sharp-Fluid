@@ -260,21 +260,21 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             const deltaTime = Math.min(clock.getDelta(), 1 / 30);
 
             // Smoothly lerp the pointer for the parallax effect
-            if (isMouseOver) {
+            if (isInteracting || (isMouse && isMouseOver)) {
                 targetParallax.copy(pointer);
             } else {
                 targetParallax.set(0.5, 0.5);
             }
             
-            const lerpFactor = (isInteracting || isMouse) ? 0.15 : 0.08;
+            const lerpFactor = (isInteracting || (isMouse && isMouseOver)) ? 0.15 : 0.08;
             lerpedPointer.lerp(targetParallax, lerpFactor);
 
             // Lerp transition factor
-            const targetTransition = isMouseOver ? 1.0 : 0.0;
+            const targetTransition = (isInteracting || (isMouse && isMouseOver)) ? 1.0 : 0.0;
             transition += (targetTransition - transition) * 0.05;
 
             // Lerp interaction factor for smooth scan waves
-            const targetInteraction = isInteracting ? 1.0 : 0.0;
+            const targetInteraction = (isInteracting || (isMouse && isMouseOver)) ? 1.0 : 0.0;
             lerpedInteraction += (targetInteraction - lerpedInteraction) * 0.04;
 
             // Smoothing pass for depth map (Two-pass separable Gaussian)
@@ -321,17 +321,17 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
                     const lerpX = lastPointer.x + dx * t;
                     const lerpY = lastPointer.y + dy * t;
                     
-                    programs.splat.uniforms.uTarget.value = density.read().texture;
-                    programs.splat.uniforms.uPoint.value.set(lerpX, lerpY);
-                    
-                    // Stronger splat when interacting (clicking) or on hover for desktop
-                    // If it's a mouse, we use full intensity on hover as requested
-                    const intensity = (isInteracting || isMouse) ? 1.0 : 0.6;
-                    programs.splat.uniforms.uColor.value.set(intensity, intensity, intensity);
-                    programs.splat.uniforms.uRadius.value = radiusInUV_Y * radiusInUV_Y;
+                    // Consistent intensity for both touch and mouse hover/drag
+                    const intensity = (isInteracting || (isMouse && isMouseOver)) ? 1.0 : 0.0;
+                    if (intensity > 0) {
+                        programs.splat.uniforms.uTarget.value = density.read().texture;
+                        programs.splat.uniforms.uPoint.value.set(lerpX, lerpY);
+                        programs.splat.uniforms.uColor.value.set(intensity, intensity, intensity);
+                        programs.splat.uniforms.uRadius.value = radiusInUV_Y * radiusInUV_Y;
 
-                    renderSimStep(density.write(), programs.splat);
-                    density.swap();
+                        renderSimStep(density.write(), programs.splat);
+                        density.swap();
+                    }
                 }
             }
             lastPointer.copy(pointer);
