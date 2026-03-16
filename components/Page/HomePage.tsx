@@ -34,21 +34,24 @@ interface Config {
     splatRadius: number;
 }
 
-const HomePage = () => {
+interface HomePageProps {
+    toggleTheme: () => void;
+    currentTheme: string;
+}
+
+const HomePage: React.FC<HomePageProps> = ({ toggleTheme, currentTheme }) => {
     const theme = useTheme();
     
     // Configuration for the fluid simulation.
     // densityDissipation controls how quickly the trail fades. A value closer to 1 means a longer trail.
     const config: Config = {
-        densityDissipation: 0.95, 
-        splatRadius: 40,
+        densityDissipation: 0.92, 
+        splatRadius: 50,
     };
-
-    const imageUrl = 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?q=80&w=2070&auto=format&fit=crop';
 
     return (
         <div style={{ position: 'relative', width: '100vw', height: '100vh', backgroundColor: theme.colors.base.surface[1], overflow: 'hidden' }}>
-            <FluidCanvas config={config} imageUrl={imageUrl} />
+            <FluidCanvas config={config} />
             <Header />
         </div>
     );

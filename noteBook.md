@@ -1,16 +1,8 @@
+# Development Notebook
 
-# Developer Notebook
-
-## To Do
-- [ ] Add touch support for mobile devices.
-- [ ] Implement curl noise shader for more vorticity.
-
-## In Progress
-- [x] Implement Meta Prototype UI (Code, Control, Console panels).
-
-## Done
-- **2024-07-30**: Implemented "Reveal" mechanic. Fluid trails now reveal an underlying image instead of painting white.
-- **2024-07-29**: Project initialized. Core architecture laid out according to System Prompt v22.
-- **2024-07-29**: Completed initial implementation of the fluid trail effect. The simulation now runs smoothly and responds to mouse input.
-- **2024-07-29**: Refactored to use standard module resolution (removed .tsx extensions in imports).
-- **2024-07-29**: Major upgrade to physics engine. Implemented advection, divergence, pressure, and gradient subtract shaders. Added Meta Prototype interface for real-time parameter tuning.
+## 2026-02-22
+- Initialized project with fluid simulation.
+- Replaced shadowy figures with 3D Among Us model.
+- Implemented dual-render pipeline (Main Red vs Blueprint Sketch).
+- Added smooth camera parallax tracking mouse/touch.
+- Updated display shader for blueprint reveal and animated sketch jitter.
