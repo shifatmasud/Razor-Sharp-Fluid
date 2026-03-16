@@ -148,6 +148,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
         let transition = 0;
         let isInteracting = false;
         let isMouseOver = false;
+        let isMouse = false;
 
         const updatePointer = (x: number, y: number) => {
             const rect = canvas.getBoundingClientRect();
@@ -165,6 +166,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
 
         const onDown = (e: PointerEvent) => {
             if(!e.isPrimary) return;
+            isMouse = e.pointerType === 'mouse';
             isInteracting = true;
             isMouseOver = true;
             updatePointer(e.clientX, e.clientY);
@@ -174,6 +176,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
 
         const onMove = (e: PointerEvent) => {
             if(!e.isPrimary) return;
+            isMouse = e.pointerType === 'mouse';
             updatePointer(e.clientX, e.clientY);
         };
 
@@ -283,7 +286,12 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
 
             if (isMouseOver && distSq > 0.000001) {
                 const dist = Math.sqrt(distSq);
-                const radiusInPixels = configRef.current.splatRadius;
+                // Scale radius relative to screen height to keep it consistent across devices
+                // Base radius of 50px on a 800px height screen (~6.25% of height)
+                const baseHeight = 800;
+                const scaleFactor = canvasSizeRef.current.height / baseHeight;
+                const radiusInPixels = configRef.current.splatRadius * scaleFactor;
+                
                 const radiusInUV_Y = radiusInPixels / canvasSizeRef.current.height;
                 const stepDistance = radiusInUV_Y * 0.25;
                 const steps = Math.max(1, Math.ceil(dist / stepDistance));
@@ -296,8 +304,9 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
                     programs.splat.uniforms.uTarget.value = density.read().texture;
                     programs.splat.uniforms.uPoint.value.set(lerpX, lerpY);
                     
-                    // Stronger splat when interacting (clicking)
-                    const intensity = isInteracting ? 1.0 : 0.4;
+                    // Stronger splat when interacting (clicking) or on hover for desktop
+                    // If it's a mouse, we use full intensity on hover as requested
+                    const intensity = (isInteracting || isMouse) ? 1.0 : 0.6;
                     programs.splat.uniforms.uColor.value.set(intensity, intensity, intensity);
                     programs.splat.uniforms.uRadius.value = radiusInUV_Y * radiusInUV_Y;
 
