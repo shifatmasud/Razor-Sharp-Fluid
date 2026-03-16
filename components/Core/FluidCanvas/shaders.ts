@@ -103,6 +103,19 @@ export const displayShader = `
         return res;
     }
 
+    vec3 colorRamp(float t) {
+        // Cinematic palette: Deep Shadow Blue -> Teal -> Amber -> Highlight Cream
+        vec3 low = vec3(0.02, 0.05, 0.1);
+        vec3 mid = vec3(0.1, 0.4, 0.45);
+        vec3 high = vec3(1.0, 0.6, 0.2);
+        vec3 peak = vec3(1.0, 0.95, 0.8);
+        
+        vec3 color = mix(low, mid, smoothstep(0.0, 0.4, t));
+        color = mix(color, high, smoothstep(0.4, 0.8, t));
+        color = mix(color, peak, smoothstep(0.8, 1.0, t));
+        return color;
+    }
+
     void main() {
         // Use gl_FragCoord to get the absolute screen position
         // This truly separates the fluid mask from the 3D camera/vertex deformation
@@ -130,7 +143,8 @@ export const displayShader = `
         float mask = smoothstep(threshold, threshold + 0.001, d); 
         
         vec4 imageColor = texture2D(uImage, coverUV);
-        vec4 depthColor = texture2D(uDepthMap, coverUV);
+        float depthRaw = texture2D(uDepthMap, coverUV).r;
+        vec3 depthCinematic = colorRamp(depthRaw);
         
         // Calculate normals from depth map for subtle lighting
         float off = 1.0 / 512.0;
@@ -145,7 +159,7 @@ export const displayShader = `
         float ambient = 0.85;
         float lighting = mix(1.0, ambient + diff * 0.15, uTransition);
 
-        vec3 finalColor = mix(imageColor.rgb, depthColor.rgb, mask);
+        vec3 finalColor = mix(imageColor.rgb, depthCinematic, mask);
         finalColor *= lighting;
 
         gl_FragColor = vec4(finalColor, 1.0);
