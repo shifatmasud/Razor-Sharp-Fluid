@@ -339,9 +339,9 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             camera.lookAt(0, 0, 0);
 
             // Enhanced rotation for 3D feel (sideways and up/down)
-            quad.rotation.y = (lerpedPointer.x - 0.5) * 0.25;
-            quad.rotation.x = (lerpedPointer.y - 0.5) * -0.25;
-            quad.rotation.z = (lerpedPointer.x - 0.5) * 0.05; // Subtle roll for extra sideways feel
+            quad.rotation.y = (lerpedPointer.x - 0.5) * 0.4;
+            quad.rotation.x = (lerpedPointer.y - 0.5) * -0.4;
+            quad.rotation.z = (lerpedPointer.x - 0.5) * 0.15; // More noticeable roll
 
             // Update mouse and transition for parallax in all programs using the lerped pointer
             Object.values(programs).forEach(p => {
