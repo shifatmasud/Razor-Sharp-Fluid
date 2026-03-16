@@ -48,7 +48,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
         const textureLoader = new THREE.TextureLoader();
         textureLoader.setCrossOrigin('anonymous');
         
-        const sceneTexture = textureLoader.load('https://github.com/shifatmasud/Razor-Sharp-Fluid/raw/refs/heads/main/Imgs/Base.png', (tex) => {
+        const sceneTexture = textureLoader.load('https://res.cloudinary.com/dkemjl9se/image/upload/v1773689080/Silhouetted_Figures_in_Misty_Alley_bsolg3.png', (tex) => {
             imageAspectRatio = tex.image.width / tex.image.height;
             tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
             handleResize();
@@ -58,7 +58,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
         sceneTexture.magFilter = THREE.LinearFilter;
         sceneTexture.wrapS = sceneTexture.wrapT = THREE.ClampToEdgeWrapping;
 
-        const depthTexture = textureLoader.load('https://github.com/shifatmasud/Razor-Sharp-Fluid/raw/refs/heads/main/Imgs/Depth.png', (tex) => {
+        const depthTexture = textureLoader.load('https://res.cloudinary.com/dkemjl9se/image/upload/v1773689214/download_cxvjsn.png', (tex) => {
             tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
         });
         depthTexture.minFilter = THREE.LinearMipmapLinearFilter;
