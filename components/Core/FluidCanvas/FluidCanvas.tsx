@@ -6,7 +6,9 @@ import {
     simVertexShader,
     splatShader, 
     dissipationShader,
-    displayShader 
+    displayShader,
+    blurShader,
+    blurFragmentShader
 } from './shaders';
 
 interface FluidConfig {
@@ -33,14 +35,33 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             antialias: false, 
             alpha: false, 
             powerPreference: "high-performance",
-            depth: false,
+            depth: true,
             stencil: false
         });
+        renderer.setPixelRatio(1);
         const canvas = renderer.domElement;
         container.appendChild(canvas);
 
         const simRes = 512;
         let imageAspectRatio = 1.0; 
+
+        const textureLoader = new THREE.TextureLoader();
+        const sceneTexture = textureLoader.load('/Imgs/Base.png', (tex) => {
+            imageAspectRatio = tex.image.width / tex.image.height;
+            tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+            handleResize();
+        });
+        sceneTexture.colorSpace = THREE.SRGBColorSpace;
+        sceneTexture.minFilter = THREE.LinearMipmapLinearFilter;
+        sceneTexture.magFilter = THREE.LinearFilter;
+        sceneTexture.wrapS = sceneTexture.wrapT = THREE.ClampToEdgeWrapping;
+
+        const depthTexture = textureLoader.load('/Imgs/Depth.png', (tex) => {
+            tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        });
+        depthTexture.minFilter = THREE.LinearMipmapLinearFilter;
+        depthTexture.magFilter = THREE.LinearFilter;
+        depthTexture.wrapS = depthTexture.wrapT = THREE.ClampToEdgeWrapping;
 
         const createFBO = (w: number, h: number) => new THREE.WebGLRenderTarget(w, h, {
             type: THREE.HalfFloatType,
@@ -60,12 +81,17 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
         };
 
         let density = createDoubleFBO(simRes, simRes);
+        const smoothDepthFBO = createFBO(1024, 1024);
+        const tempDepthFBO = createFBO(1024, 1024);
 
         const geometry = new THREE.PlaneGeometry(2, 2, 128, 128);
         const scene = new THREE.Scene();
         const quad = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
         scene.add(quad);
-        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        
+        // Use PerspectiveCamera for better 3D depth perception
+        const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+        camera.position.z = 2.4142; // Positioned so a 2x2 plane at z=0 fills the screen at FOV 45
 
         const createProgram = (frag: string, isSim: boolean = false) => new THREE.ShaderMaterial({
             vertexShader: isSim ? simVertexShader : baseVertexShader,
@@ -80,24 +106,46 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
                 uSource: { value: null },
                 uDissipation: { value: 0.98 },
                 uDensity: { value: null },
-                uImage: { value: null },
-                uDepthMap: { value: null },
+                uImage: { value: sceneTexture },
+                uDepthMap: { value: depthTexture },
+                uImageAspectRatio: { value: imageAspectRatio },
                 uMouse: { value: new THREE.Vector2(0.5, 0.5) },
                 uParallaxStrength: { value: 0.05 },
+                uTransition: { value: 0.0 },
             },
             depthWrite: false,
             depthTest: false
-        }) as any; // Cast to any to avoid strict Material type issues during assignment
+        }) as any; 
 
         const programs = {
             splat: createProgram(splatShader, true),
             dissipate: createProgram(dissipationShader, true),
-            display: createProgram(displayShader, false)
+            display: createProgram(displayShader, false),
+            blur: new THREE.ShaderMaterial({
+                vertexShader: blurShader,
+                fragmentShader: blurFragmentShader,
+                uniforms: {
+                    uTexture: { value: depthTexture },
+                    uResolution: { value: new THREE.Vector2(1024, 1024) },
+                    uDirection: { value: new THREE.Vector2(1, 0) }
+                },
+                depthTest: false,
+                depthWrite: false
+            })
         };
 
+        const blurScene = new THREE.Scene();
+        const blurQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), programs.blur);
+        blurScene.add(blurQuad);
+        const blurCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
         const pointer = new THREE.Vector2(0.5, 0.5);
+        const lerpedPointer = new THREE.Vector2(0.5, 0.5);
         const lastPointer = new THREE.Vector2(0.5, 0.5);
+        const targetParallax = new THREE.Vector2(0.5, 0.5);
+        let transition = 0;
         let isInteracting = false;
+        let isMouseOver = false;
 
         const updatePointer = (x: number, y: number) => {
             const rect = canvas.getBoundingClientRect();
@@ -107,12 +155,16 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             // Only update if the pointer is within the canvas bounds
             if (newX >= 0 && newX <= 1 && newY >= 0 && newY <= 1) {
                 pointer.set(newX, newY);
+                isMouseOver = true;
+            } else {
+                isMouseOver = false;
             }
         };
 
         const onDown = (e: PointerEvent) => {
             if(!e.isPrimary) return;
             isInteracting = true;
+            isMouseOver = true;
             updatePointer(e.clientX, e.clientY);
             lastPointer.copy(pointer);
             (e.target as Element).setPointerCapture(e.pointerId);
@@ -131,151 +183,37 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             }
         };
 
+        const onLeave = () => {
+            isInteracting = false;
+            isMouseOver = false;
+        };
+
         const handleResize = () => {
             if (!mountRef.current) return;
             const containerWidth = mountRef.current.clientWidth;
             const containerHeight = mountRef.current.clientHeight;
             const containerAspect = containerWidth / containerHeight;
         
-            let canvasWidth, canvasHeight;
-        
-            if (containerAspect > imageAspectRatio) {
-                // Container is wider than the image -> letterbox horizontally
-                canvasHeight = containerHeight;
-                canvasWidth = canvasHeight * imageAspectRatio;
-            } else {
-                // Container is taller than the image -> letterbox vertically
-                canvasWidth = containerWidth;
-                canvasHeight = canvasWidth / imageAspectRatio;
-            }
-        
-            renderer.setSize(canvasWidth, canvasHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-            canvasSizeRef.current = { width: canvasWidth, height: canvasHeight };
+            renderer.setSize(containerWidth, containerHeight);
+            renderer.setPixelRatio(1);
+            canvasSizeRef.current = { width: containerWidth, height: containerHeight };
             
-            // The aspect ratio for the shaders is now always the image's aspect ratio
-            programs.splat.uniforms.uAspectRatio.value = imageAspectRatio;
-            programs.display.uniforms.uAspectRatio.value = imageAspectRatio;
+            camera.aspect = containerAspect;
+            camera.updateProjectionMatrix();
+
+            // Scale the quad to fill the screen in perspective view
+            quad.scale.set(containerAspect, 1, 1);
+            
+            programs.splat.uniforms.uAspectRatio.value = containerAspect;
+            programs.display.uniforms.uAspectRatio.value = containerAspect;
+            programs.display.uniforms.uImageAspectRatio.value = imageAspectRatio;
         };
 
-        const generateSceneTexture = (width: number, height: number, isDepth: boolean) => {
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) return canvas;
-
-            if (isDepth) {
-                // Background depth
-                ctx.fillStyle = '#111111';
-                ctx.fillRect(0, 0, width, height);
-                
-                // Add some depth to the jungle background
-                for (let i = 0; i < 20; i++) {
-                    const d = Math.floor(20 + Math.random() * 30);
-                    ctx.fillStyle = `rgb(${d},${d},${d})`;
-                    ctx.beginPath();
-                    ctx.ellipse(Math.random() * width, Math.random() * height, 100 + Math.random() * 200, 200 + Math.random() * 400, Math.random() * Math.PI, 0, Math.PI * 2);
-                    ctx.fill();
-                }
-            } else {
-                const grad = ctx.createLinearGradient(0, 0, 0, height);
-                grad.addColorStop(0, '#0a1a0a');
-                grad.addColorStop(1, '#1a2a1a');
-                ctx.fillStyle = grad;
-                ctx.fillRect(0, 0, width, height);
-
-                for (let i = 0; i < 50; i++) {
-                    ctx.fillStyle = `rgba(10, ${30 + Math.random() * 40}, 10, 0.3)`;
-                    ctx.beginPath();
-                    ctx.ellipse(Math.random() * width, Math.random() * height, 20 + Math.random() * 100, 50 + Math.random() * 200, Math.random() * Math.PI, 0, Math.PI * 2);
-                    ctx.fill();
-                }
-            }
-
-            const drawFigure = (x: number, y: number, scale: number, type: 'hooded' | 'batsuit' | 'spy', depth: number) => {
-                ctx.save();
-                ctx.translate(x, y);
-                ctx.scale(scale, scale);
-
-                if (isDepth) {
-                    const d = Math.floor(depth * 255);
-                    ctx.fillStyle = `rgb(${d},${d},${d})`;
-                    ctx.strokeStyle = `rgb(${d},${d},${d})`;
-                } else {
-                    ctx.fillStyle = '#050505';
-                    ctx.strokeStyle = '#050505';
-                }
-
-                ctx.beginPath();
-                ctx.moveTo(-30, 100);
-                ctx.lineTo(-20, 20);
-                ctx.quadraticCurveTo(0, 10, 20, 20);
-                ctx.lineTo(30, 100);
-                ctx.fill();
-
-                if (type === 'hooded') {
-                    ctx.beginPath();
-                    ctx.arc(0, 0, 25, Math.PI, 0);
-                    ctx.lineTo(25, 30);
-                    ctx.lineTo(-25, 30);
-                    ctx.closePath();
-                    ctx.fill();
-                } else if (type === 'batsuit') {
-                    ctx.beginPath();
-                    ctx.arc(0, 0, 20, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.beginPath();
-                    ctx.moveTo(-15, -10);
-                    ctx.lineTo(-18, -35);
-                    ctx.lineTo(-5, -15);
-                    ctx.fill();
-                    ctx.beginPath();
-                    ctx.moveTo(15, -10);
-                    ctx.lineTo(18, -35);
-                    ctx.lineTo(5, -15);
-                    ctx.fill();
-                } else if (type === 'spy') {
-                    ctx.beginPath();
-                    ctx.arc(0, 0, 22, 0, Math.PI * 2);
-                    ctx.fill();
-                    if (!isDepth) {
-                        ctx.fillStyle = '#111111';
-                        ctx.fillRect(-15, -5, 30, 10);
-                        ctx.fillStyle = '#222222';
-                        ctx.fillRect(-13, -3, 10, 6);
-                        ctx.fillRect(3, -3, 10, 6);
-                    }
-                }
-
-                ctx.restore();
-            };
-
-            drawFigure(width * 0.3, height * 0.6, 1.5, 'hooded', 0.6);
-            drawFigure(width * 0.5, height * 0.55, 1.8, 'batsuit', 0.8);
-            drawFigure(width * 0.7, height * 0.65, 1.4, 'spy', 0.5);
-
-            return canvas;
-        };
-
-        const sceneCanvas = generateSceneTexture(1024, 1024, false);
-        const depthCanvas = generateSceneTexture(1024, 1024, true);
-
-        const sceneTexture = new THREE.CanvasTexture(sceneCanvas);
-        sceneTexture.colorSpace = THREE.SRGBColorSpace;
-        const depthTexture = new THREE.CanvasTexture(depthCanvas);
-
-        imageAspectRatio = 1.0;
-        programs.display.uniforms.uImage.value = sceneTexture;
-        programs.display.uniforms.uDepthMap.value = depthTexture;
-        programs.dissipate.uniforms.uDepthMap.value = depthTexture; // For vertex shader
-        programs.splat.uniforms.uDepthMap.value = depthTexture; // For vertex shader
-        
         // Update all programs with depth map for vertex shader
         Object.values(programs).forEach(p => {
-            p.uniforms.uDepthMap = { value: depthTexture };
-            p.uniforms.uMouse = { value: pointer };
-            p.uniforms.uParallaxStrength = { value: 0.15 }; // Increased strength
+            if (p.uniforms.uDepthMap) p.uniforms.uDepthMap.value = smoothDepthFBO.texture;
+            if (p.uniforms.uMouse) p.uniforms.uMouse.value = pointer;
+            if (p.uniforms.uParallaxStrength) p.uniforms.uParallaxStrength.value = 0.15; 
         });
 
         handleResize();
@@ -286,7 +224,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
         container.addEventListener('pointerdown', onDown);
         container.addEventListener('pointermove', onMove);
         container.addEventListener('pointerup', onUp);
-        container.addEventListener('pointerleave', onUp);
+        container.addEventListener('pointerleave', onLeave);
 
         const renderStep = (target: THREE.WebGLRenderTarget | null) => {
             renderer.setRenderTarget(target);
@@ -300,6 +238,33 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             
             const deltaTime = Math.min(clock.getDelta(), 1 / 30);
 
+            // Smoothly lerp the pointer for the parallax effect
+            if (isMouseOver) {
+                targetParallax.copy(pointer);
+            } else {
+                targetParallax.set(0.5, 0.5);
+            }
+            
+            const lerpFactor = isInteracting ? 0.15 : 0.08;
+            lerpedPointer.lerp(targetParallax, lerpFactor);
+
+            // Lerp transition factor
+            const targetTransition = isMouseOver ? 1.0 : 0.0;
+            transition += (targetTransition - transition) * 0.05;
+
+            // Smoothing pass for depth map (Two-pass separable Gaussian)
+            // Pass 1: Horizontal
+            programs.blur.uniforms.uTexture.value = depthTexture;
+            programs.blur.uniforms.uDirection.value.set(2.0, 0.0); // Slightly wider
+            renderer.setRenderTarget(tempDepthFBO);
+            renderer.render(blurScene, blurCamera);
+
+            // Pass 2: Vertical
+            programs.blur.uniforms.uTexture.value = tempDepthFBO.texture;
+            programs.blur.uniforms.uDirection.value.set(0.0, 2.0);
+            renderer.setRenderTarget(smoothDepthFBO);
+            renderer.render(blurScene, blurCamera);
+
             programs.dissipate.uniforms.uSource.value = density.read().texture;
             const dissipation = Math.pow(configRef.current.densityDissipation, deltaTime * 60.0);
             programs.dissipate.uniforms.uDissipation.value = dissipation;
@@ -310,10 +275,11 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             // Splat on interaction (click/drag) or just mouse move
             const dx = pointer.x - lastPointer.x;
             const dy = pointer.y - lastPointer.y;
-            const dxCorrected = dx * imageAspectRatio;
+            const containerAspect = canvasSizeRef.current.width / canvasSizeRef.current.height;
+            const dxCorrected = dx * containerAspect;
             const distSq = dxCorrected * dxCorrected + dy * dy;
 
-            if (distSq > 0.000001) {
+            if (isMouseOver && distSq > 0.000001) {
                 const dist = Math.sqrt(distSq);
                 const radiusInPixels = configRef.current.splatRadius;
                 const radiusInUV_Y = radiusInPixels / canvasSizeRef.current.height;
@@ -343,9 +309,15 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             programs.display.uniforms.uDensity.value = density.read().texture;
             programs.display.uniforms.uPoint.value.copy(pointer);
             
-            // Update mouse for parallax in all programs
+            // Subtle rotation for 3D feel
+            quad.rotation.y = (lerpedPointer.x - 0.5) * 0.15;
+            quad.rotation.x = (lerpedPointer.y - 0.5) * -0.15;
+
+            // Update mouse and transition for parallax in all programs using the lerped pointer
             Object.values(programs).forEach(p => {
-                if (p.uniforms.uMouse) p.uniforms.uMouse.value.copy(pointer);
+                if (p.uniforms.uMouse) p.uniforms.uMouse.value.copy(lerpedPointer);
+                if (p.uniforms.uTransition) p.uniforms.uTransition.value = transition;
+                if (p.uniforms.uDepthMap) p.uniforms.uDepthMap.value = smoothDepthFBO.texture;
             });
 
             quad.material = programs.display;
@@ -360,10 +332,12 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
             container.removeEventListener('pointerdown', onDown);
             container.removeEventListener('pointermove', onMove);
             container.removeEventListener('pointerup', onUp);
-            container.removeEventListener('pointerleave', onUp);
+            container.removeEventListener('pointerleave', onLeave);
             renderer.dispose();
             density.read().dispose();
             density.write().dispose();
+            smoothDepthFBO.dispose();
+            tempDepthFBO.dispose();
             sceneTexture.dispose();
             depthTexture.dispose();
         };
