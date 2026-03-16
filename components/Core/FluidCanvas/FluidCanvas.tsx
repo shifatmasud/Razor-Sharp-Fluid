@@ -263,7 +263,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
                 targetParallax.set(0.5, 0.5);
             }
             
-            const lerpFactor = isInteracting ? 0.15 : 0.08;
+            const lerpFactor = (isInteracting || isMouse) ? 0.15 : 0.08;
             lerpedPointer.lerp(targetParallax, lerpFactor);
 
             // Lerp transition factor
