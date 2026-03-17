@@ -30,7 +30,7 @@ export const baseVertexShader = `
         
         // Physical Z-axis push based on depth map
         // This creates real 3D geometry
-        newPosition.z += depth * 0.4 * uTransition; 
+        newPosition.z += depth * 0.6 * uTransition; 
         
         gl_Position = projectionMatrix * modelViewMatrix * vec4(newPosition, 1.0);
         
@@ -156,7 +156,7 @@ export const displayShader = `
         
         // Depth Scan Effect
         // A moving wave that highlights depth levels when interacting
-        float scanPos = mod(uTime * 0.4, 1.2) - 0.1; 
+        float scanPos = mod(uTime * 0.2, 2.0) - 0.1; 
         
         // Performance tradeoff: wider smoothstep for "diffused" look
         // This simulates a blurry scanline without expensive multi-sampling
@@ -166,7 +166,7 @@ export const displayShader = `
                          (1.0 - smoothstep(scanPos, scanPos + scanEdge, depthRaw));
         
         // Add a secondary faster wave for more tech feel
-        float scanPos2 = mod(uTime * 0.8, 1.4) - 0.2;
+        float scanPos2 = mod(uTime * 0.4, 2.5) - 0.2;
         float scanLine2 = smoothstep(scanPos2 - 0.04, scanPos2 - 0.01, depthRaw) * 
                           (1.0 - smoothstep(scanPos2, scanPos2 + 0.01, depthRaw));
         

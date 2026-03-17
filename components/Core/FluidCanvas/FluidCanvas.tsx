@@ -93,7 +93,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
         
         // Use PerspectiveCamera for better 3D depth perception
         const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-        camera.position.z = 2.4142; // Positioned so a 2x2 plane at z=0 fills the screen at FOV 45
+        camera.position.z = 3.5; // Moved farther away (was 2.4142)
 
         const createProgram = (frag: string, isSim: boolean = false) => new THREE.ShaderMaterial({
             vertexShader: isSim ? simVertexShader : baseVertexShader,
@@ -228,7 +228,7 @@ const FluidCanvas: React.FC<FluidCanvasProps> = ({ config }) => {
         Object.values(programs).forEach(p => {
             if (p.uniforms.uDepthMap) p.uniforms.uDepthMap.value = smoothDepthFBO.texture;
             if (p.uniforms.uMouse) p.uniforms.uMouse.value = pointer;
-            if (p.uniforms.uParallaxStrength) p.uniforms.uParallaxStrength.value = 0.25; 
+            if (p.uniforms.uParallaxStrength) p.uniforms.uParallaxStrength.value = 0.6; 
         });
 
         handleResize();
